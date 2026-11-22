@@ -1,0 +1,135 @@
+openapi: 3.0.0
+info:
+  title: vvot09 Archive Service API
+  description: Система архивирования файлов (vvot09)
+  version: 1.0.0
+
+x-yc-apigateway:
+  service_account_id: ${service_account_id}
+
+paths:
+  /tasks:
+    post:
+      operationId: createTask
+      summary: Создание задания на архивирование файла
+      x-yc-apigateway-validator:
+        validateRequestBody: true
+      x-yc-apigateway-integration:
+        type: cloud_ymq
+        action: SendMessage
+        queue_url: ${queue_url}
+        folder_id: ${folder_id}
+        service_account_id: ${service_account_id}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Task'
+      responses:
+        '200':
+          description: Задание принято и поставлено в очередь (клиенту возвращается 202 Accepted)
+          x-yc-status-mapping: 202
+        '400':
+          description: Некорректное задание
+
+  /archives:
+    get:
+      operationId: listArchives
+      summary: Получение списка архивов
+      x-yc-apigateway-integration:
+        type: cloud_ydb
+        action: Scan
+        database: ${database}
+        table_name: archives
+        service_account_id: ${service_account_id}
+      responses:
+        '200':
+          description: Список архивов
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Archive'
+
+  /archives/{key}:
+    get:
+      operationId: getArchive
+      summary: Получение информации об архиве
+      x-yc-apigateway-integration:
+        type: cloud_ydb
+        action: GetItem
+        database: ${database}
+        table_name: archives
+        key: '{"key": "{key}"}'
+        service_account_id: ${service_account_id}
+      parameters:
+        - $ref: '#/components/parameters/ArchiveKey'
+      responses:
+        '200':
+          description: Информация об архиве
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Archive'
+        '404':
+          description: Архив не найден
+
+  /download/{key}:
+    get:
+      operationId: downloadArchive
+      summary: Скачивание ZIP-архива
+      x-yc-apigateway-integration:
+        type: object_storage
+        bucket: ${bucket}
+        object: '{key}'
+        service_account_id: ${service_account_id}
+      parameters:
+        - $ref: '#/components/parameters/ArchiveKey'
+      responses:
+        '200':
+          description: ZIP-архив
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Архив не найден
+
+components:
+  parameters:
+    ArchiveKey:
+      name: key
+      in: path
+      required: true
+      description: Ключ архива в хранилище (<uuid_v7>.zip)
+      schema:
+        type: string
+  schemas:
+    Task:
+      type: object
+      required: [name, url]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          description: Название файла
+          example: document.pdf
+        url:
+          type: string
+          minLength: 1
+          pattern: '^https?://\S+$'
+          description: Ссылка, по которой можно скачать файл
+          example: https://example.com/document.pdf
+    Archive:
+      type: object
+      required: [name, url, key]
+      properties:
+        name:
+          type: string
+        url:
+          type: string
+        key:
+          type: string
